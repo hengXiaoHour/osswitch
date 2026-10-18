@@ -20,15 +20,10 @@
 #>
 [CmdletBinding()]
 param(
-    [switch] $NoConfirm,
-    # Skips the "press Enter to close" waits. Required for scripted runs, where
-    # Read-Host would block forever on a stdin nobody is typing into.
-    [switch] $NoPause,
     # NOT '' - an empty FilePath makes Start-Process throw. Every test that
     # injected a stub would hide a broken default.
     [string] $ShutdownPath = 'shutdown.exe',
-    [string] $BcdeditPath = 'bcdedit.exe',
-    [int] $Countdown = 15
+    [string] $BcdeditPath = 'bcdedit.exe'
 )
 
 Set-StrictMode -Version Latest
@@ -46,11 +41,6 @@ function Write-Log {
     catch { }
 }
 
-function Wait-ForReader {
-    if (-not $NoPause) { $null = Read-Host }
-    else { Start-Sleep -Milliseconds 200 }
-}
-
 # ---- elevate ----
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -59,8 +49,6 @@ $alreadyElevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::
 if (-not $alreadyElevated -and $env:OSSWITCH_TEST_BYPASS_ELEVATION -ne '1') {
     Write-Log 'not elevated - requesting elevation'
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $PSCommandPath + '"'))
-    if ($NoConfirm) { $argList += '-NoConfirm' }
-    if ($NoPause) { $argList += '-NoPause' }
     $argList += @('-ShutdownPath', ('"' + $ShutdownPath + '"'))
     $argList += @('-BcdeditPath', ('"' + $BcdeditPath + '"'))
     $child = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList $argList
@@ -69,38 +57,10 @@ if (-not $alreadyElevated -and $env:OSSWITCH_TEST_BYPASS_ELEVATION -ne '1') {
 
 Write-Log 'BOOT-MANJARO START (elevated)'
 
-# ---- confirm ----
-$proceed = $false
-if ($NoConfirm) {
-    $proceed = $true
-}
-else {
-    $askedWith = ''
-    try {
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        $msg = "Restart your computer into Manjaro now?`r`n`r`nSave your work first - anything you have open will close."
-        $answer = [System.Windows.Forms.MessageBox]::Show(
-            $msg, 'Switch to Manjaro',
-            [System.Windows.Forms.MessageBoxButtons]::YesNo,
-            [System.Windows.Forms.MessageBoxIcon]::Warning)
-        $proceed = ($answer -eq [System.Windows.Forms.DialogResult]::Yes)
-        $askedWith = 'dialog'
-    }
-    catch {
-        Write-Log ('dialog unavailable: ' + $_.Exception.Message)
-        $typed = Read-Host '  Type Y and press Enter to restart into Manjaro, anything else to cancel'
-        $proceed = ($typed -match '^(?i)y(es)?$')
-        $askedWith = 'console'
-    }
-    Write-Log "confirmation asked with=$askedWith proceed=$proceed"
-
-    if (-not $proceed) {
-        Write-Host ''
-        Write-Host '  Cancelled - nothing was changed.'
-        Wait-ForReader
-        exit 0
-    }
-}
+# ---- no confirmation ----
+# Single click = immediate restart. The button promises "Switch to Manjaro",
+# so it just does it. Any pending Windows override is cleared first.
+$proceed = $true
 
 # ---- clear any pending one-shot override ----
 # This is the only boot-store write this icon needs. An override left behind by
@@ -126,15 +86,14 @@ catch {
     Write-Log ('BOOTSTORE CLEAR FAILED: ' + $_.Exception.Message)
     Write-Host ''
     Write-Host ('  COULD NOT CHECK THE BOOT ORDER: ' + $_.Exception.Message)
-    Write-Host '  Restarting anyway. Press Enter to close this window.'
-    Wait-ForReader
+    Write-Host '  Restarting anyway.'
     exit 1
 }
 
 Write-Host ''
 Write-Host '  Manjaro is already the first boot choice.'
 if ($cleared -like 'a pending*') { Write-Host "  Note: $cleared." }
-Write-Host ("  Restarting in {0} seconds..." -f $Countdown)
+Write-Host '  Restarting now...'
 
 # Detached on purpose. shutdown.exe with /t blocks for the whole countdown and is
 # killed by the restart it just scheduled, so calling it inline made this script
@@ -146,8 +105,8 @@ try {
     if (-not (Get-Command $ShutdownPath -ErrorAction SilentlyContinue)) {
         throw "cannot find '$ShutdownPath' on PATH"
     }
-    # Quote the comment so it stays ONE argument.
-    $shutArgs = @('/r', '/t', [string]$Countdown, '/c', '"Switch to Manjaro"')
+    # Immediate restart (/t 0), no countdown.
+    $shutArgs = @('/r', '/t', '0', '/c', '"Switch to Manjaro"')
     $null = Start-Process -FilePath $ShutdownPath -ArgumentList $shutArgs -WindowStyle Hidden
     Write-Log 'restart scheduled'
 }
@@ -155,13 +114,8 @@ catch {
     Write-Log ('RESTART FAILED: ' + $_.Exception.Message)
     Write-Host ''
     Write-Host ('  THE RESTART COULD NOT BE STARTED: ' + $_.Exception.Message)
-    Write-Host '  Nothing has changed. Press Enter to close this window.'
-    Wait-ForReader
+    Write-Host '  Nothing has changed.'
     exit 1
 }
 
-Write-Host ''
-Write-Host '  To cancel the restart, run:  shutdown /a'
-Write-Host ''
-Start-Sleep -Seconds 5
 exit 0

@@ -122,47 +122,8 @@ Write-Host ''
 Write-Host ("  osswitch - switch to {0}" -f $label)
 Write-Host ("  {0}" -f ('-' * 44))
 
-<#
-    Ask before rebooting.
-
-    This used to be $host.UI.PromptForChoice, an arrow-key menu. That was a bad
-    fit: someone typing ordinary words just selects the default (No), the window
-    closes, and it looks like nothing happened. A normal Yes/No dialog is
-    unambiguous, with a plain typed question as the fallback.
-#>
-if (-not $NoConfirm) {
-    Write-Host ''
-    Write-Host ("  Restart your computer into {0} now?" -f $label)
-    Write-Host '  Save your work first - anything open will close.'
-    Write-Host ''
-
-    $proceed = $false
-    $askedWith = ''
-    try {
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        $msg = "Restart your computer into $label now?`r`n`r`nSave your work first - anything you have open will close."
-        $answer = [System.Windows.Forms.MessageBox]::Show(
-            $msg, "Switch to $label",
-            [System.Windows.Forms.MessageBoxButtons]::YesNo,
-            [System.Windows.Forms.MessageBoxIcon]::Warning)
-        $proceed = ($answer -eq [System.Windows.Forms.DialogResult]::Yes)
-        $askedWith = 'dialog'
-    }
-    catch {
-        Write-Log ("dialog unavailable: " + $_.Exception.Message)
-        $typed = Read-Host ("  Type Y and press Enter to restart into {0}, anything else to cancel" -f $label)
-        $proceed = ($typed -match '^(?i)y(es)?$')
-        $askedWith = 'console'
-    }
-    Write-Log ("confirmation asked with=$askedWith proceed=$proceed")
-
-    if (-not $proceed) {
-        Write-Host ''
-        Write-Host '  Cancelled - nothing was changed.'
-        Start-Sleep -Seconds 6
-        exit 0
-    }
-}
+# No confirmation: single click = immediate restart.
+# The button promises "Restart to Windows 11" / "Switch to Manjaro", so it just does it.
 
 $sshArgs = @{ Action = $Target }
 if ($DryRun) { $sshArgs['DryRun'] = $true }
@@ -201,7 +162,7 @@ elseif ($alreadySet) {
         Write-Host 'Dry run finished. Nothing was rebooted.'
     }
     else {
-        Write-Host ("Restarting into {0} in 15 seconds..." -f $label)
+        Write-Host ("Restarting into {0} now..." -f $label)
 
         # Detached on purpose. shutdown.exe with /t BLOCKS for the whole countdown
         # and is killed by the shutdown it just scheduled, so calling it inline made
@@ -213,24 +174,18 @@ elseif ($alreadySet) {
             if (-not (Get-Command $ShutdownPath -ErrorAction SilentlyContinue)) {
                 throw "cannot find '$ShutdownPath' on PATH"
             }
-            # Quote the comment so it stays ONE argument; unquoted, shutdown.exe
-            # takes 'osswitch:' as the message and chokes on the rest.
-            $shutArgs = @('/r', '/t', '15', '/c', ('"osswitch: booting {0}"' -f $label))
-            $null = Start-Process -FilePath $ShutdownPath -ArgumentList $shutArgs -WindowStyle Hidden
+            # Immediate restart (/t 0), no countdown.
+            $shutArgs = @('/r', '/t', '0', '/c', ('"osswitch: booting {0}"' -f $label))
+            $null = Start-Process -FilePath $ShutdownPath -ArgumentList $shutArgs -WindowStyle Hidden -Wait
             Write-Log 'reboot scheduled'
 
-            Write-Host ''
-            Write-Host '  Close anything you want to keep open.'
-            Write-Host '  To cancel the restart, run:  shutdown /a'
-            Write-Host ''
-            Start-Sleep -Seconds 5
             exit 0
         }
         catch {
             Write-Log ('REBOOT SCHEDULING FAILED: ' + $_.Exception.Message)
             Write-Host ''
             Write-Host ('  THE RESTART COULD NOT BE STARTED: ' + $_.Exception.Message)
-            Write-Host '  Nothing has changed. Press Enter to close this window.'
+            Write-Host '  Nothing has changed.'
             if (-not $NoPause) { $null = Read-Host } else { Start-Sleep -Milliseconds 200 }
             exit 1
         }

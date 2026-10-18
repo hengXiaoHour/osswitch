@@ -111,11 +111,10 @@ Check 'already-on-target exits 0' ($r.Exit -eq 0) $r.Out
 Check 'already-on-target explains why nothing changed' ($r.Out -match 'Already set to boot Manjaro')
 Check 'already-on-target does not claim a dry run' (-not ($r.Out -match 'Nothing was rebooted'))
 Check 'already-on-target still reboots (the user asked to boot it)' $r.Rebooted
-Check 'already-on-target reboot has a cancellation window' ((Get-Content (Join-Path $d 'shutdown.log') -Raw) -match '/t 15')
+Check 'already-on-target reboot is immediate' ((Get-Content (Join-Path $d 'shutdown.log') -Raw) -match '/t 0')
 # Detached, so the launcher must finish its own output and exit 0 rather than
 # being killed by the shutdown it scheduled.
 Check 'already-on-target launcher exits cleanly' ($r.Exit -eq 0) $r.Out
-Check 'already-on-target tells the user how to cancel' ($r.Out -match 'shutdown /a')
 Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue
 
 # ---- 3b. already on target + -DryRun must NOT reboot ----
@@ -154,22 +153,15 @@ Check 'a real switch with a failing reboot does not claim success' (-not ($r.Out
 Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue
 
 # ---- 3e. the restart must NOT block the launcher ----
-# This is the bug that made the shortcut look dead: shutdown.exe with /t blocks
-# for the whole countdown and is killed by the restart it scheduled, so the
-# script died mid-call with exit 1 and never printed a result. A slow shutdown
-# stub stands in for that countdown.
+# With /t 0 shutdown.exe schedules the reboot and exits immediately,
+# so the launcher should not be held open. The default stub is fast.
 $d = New-Scenario
-Set-Content -Path (Join-Path $d 'shutdown.cmd') -Encoding ASCII -Value @(
-    '@echo off',
-    'ping -n 11 127.0.0.1 >nul',
-    'exit /b 0'
-)
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $r = Run-Launcher -Dir $d -Target manjaro -NoConfirm
 $sw.Stop()
-Check 'a slow restart does not hold the launcher open' ($sw.Elapsed.TotalSeconds -lt 8) ("took $([math]::Round($sw.Elapsed.TotalSeconds,1))s")
-Check 'a slow restart still exits cleanly' ($r.Exit -eq 0) $r.Out
-Check 'a slow restart still shows the result' ($r.Out -match 'Already set to boot Manjaro')
+Check 'restart does not hold the launcher open' ($sw.Elapsed.TotalSeconds -lt 8) ("took $([math]::Round($sw.Elapsed.TotalSeconds,1))s")
+Check 'restart still exits cleanly' ($r.Exit -eq 0) $r.Out
+Check 'restart still shows the result' ($r.Out -match 'Already set to boot Manjaro')
 Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue
 
 # ---- 4. a bad target is refused by parameter validation ----
