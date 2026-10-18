@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Stub yad: the same job as the zenity stub, for the other supported dialog tool.
+#
+# --gui mode exists so that a failure launched from a desktop launcher is
+# visible rather than silent, which means the only way to test it is to capture
+# what the dialog would have said.
+
+# OSSWITCH_STUB_DIALOG_RC=N  answer the question with "No" (exit N instead of 0)
+
+set -uo pipefail
+
+LOG="${OSSWITCH_STUB_DIALOG_LOG:-/tmp/osswitch-stub-yad.log}"
+printf '%s\n' "$*" >>"$LOG"
+exit "${OSSWITCH_STUB_DIALOG_RC:-0}"

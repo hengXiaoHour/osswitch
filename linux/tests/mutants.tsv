@@ -1,0 +1,15 @@
+# mutant id | what it breaks | scenario that must catch it
+# Columns are pipe-separated. The runner breaks the script this way and requires
+# the named scenario to fail - a mutant that survives means the check it targets
+# is not really testing anything.
+no-verify            | reboots without checking the firmware accepted the write | sc_write_refused
+verify-stale         | verifies the pre-write state instead of the stored one     | sc_dry_run_windows
+dry-run-ignored      | --dry-run writes and reboots anyway                          | sc_dry_run_windows
+restore-wrong-flag   | restore uses -b (--bootnum), the original bug                | sc_restore
+restore-no-verify    | restore claims success even when the delete did nothing     | sc_restore_refused
+resolve-fallback     | an absent target silently falls back to another entry       | sc_missing_entry
+parser-field-split   | entry parsing truncates descriptions at whitespace           | sc_real_fixture
+gui-dialog-removed   | a GUI failure is silent again                               | sc_gui_dialog_on_failure
+gui-no-confirm         | the launcher reboots without asking               | sc_gui_asks_before_reboot
+gui-confirms-twice     | the escalated run asks the reboot question again         | sc_escalated_dry_run
+escalate-drops-flags | pkexec forwarding drops --dry-run, so escalation reboots   | sc_escalated_dry_run

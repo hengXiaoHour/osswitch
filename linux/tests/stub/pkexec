@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Stub pkexec: stands in for polkit so escalation can be tested without a
+# password prompt.
+#
+# It does the one thing that matters for the tests: it runs the command with a
+# WIPED environment, exactly as real polkit does, plus a marker that stands in
+# for having become root. That is how the suite catches the class of bug where
+# a mode is selected by an environment variable - pkexec drops it, the root
+# process never sees it, and the feature silently does nothing.
+#
+# OSSWITCH_STUB_PKEXEC_RC=N  exit with N instead of running the command
+#                             (126/127 model a dismissed prompt).
+
+set -uo pipefail
+
+if [[ -n ${OSSWITCH_STUB_PKEXEC_RC:-} ]]; then
+  exit "$OSSWITCH_STUB_PKEXEC_RC"
+fi
+
+exec env -i PATH="$PATH" HOME="${HOME:-/root}" \
+  OSSWITCH_TEST_ASSUME_ROOT=1 "${@:?pkexec stub: nothing to run}"

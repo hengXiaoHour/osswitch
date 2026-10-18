@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Stub systemctl: records a reboot request instead of performing one.
+#
+# The real osswitch reboots at the end of a switch. A test suite that can only be
+# trusted because it "would obviously not reboot" is not a test suite, so the
+# reboot is a stub that appends to a file the suite then asserts on.
+
+set -uo pipefail
+
+LOG="${OSSWITCH_STUB_REBOOT_LOG:-/tmp/osswitch-stub-reboot.log}"
+printf '%s %s\n' "$(date +%s%N)" "$*" >>"$LOG"
+exit 0

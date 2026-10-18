@@ -1,19 +1,160 @@
-# osswitch — Windows half
+# osswitch
 
 One command to pick which OS this laptop boots next: **Windows 11** or **Manjaro**.
-
-The Linux half lives at `~/.local/bin/osswitch` on the Manjaro partition. Together
-they remove the "reboot, then mash F12 and hope" step from switching between the
+It removes the "reboot, then mash F12 and hope" step from switching between the
 two systems.
 
-```
-osswitch status      # what will boot next, and is anything unsafe
-osswitch manjaro     # boot Manjaro next time
-osswitch windows     # boot Windows 11 next time
-osswitch restore     # cancel a pending switch and go back to the usual order
+There are two halves, and they take the same commands:
+
+| command | Linux half | Windows half |
+| --- | --- | --- |
+| `osswitch status` | what boots by default, what is pending | same |
+| `osswitch list` | the boot entries this machine has | same |
+| `osswitch windows` | queue Windows, reboot | same |
+| `osswitch manjaro` | queue Manjaro, reboot | same |
+| `osswitch restore` | drop a pending switch | same |
+
+The same names, deliberately: one habit has to work from either side of the
+dual boot. What differs is only the mechanism — `efibootmgr -n` (BootNext) from
+Linux, `bcdedit` from Windows.
+
+Both halves set a **one-shot boot override**: the firmware uses it for the very
+next boot and then discards it. Nothing is permanently reordered, so a switch
+that goes wrong falls through to the normal order on the next boot, and nothing
+needs undoing after a successful one.
+
+- [Linux half](#linux-half-efibootmgr) — below
+- [Windows half](#windows-half-bcdedit)
+
+---
+
+## Linux half (efibootmgr)
+
+`linux/osswitch` — one bash script, `efibootmgr`, and two GNOME launchers. This
+is the side that runs *on the machine you are typing at*, so it is the one you
+will actually use to leave.
+
+### Install
+
+```bash
+git clone https://github.com/hengXiaoHour/osswitch.git
+cd osswitch/linux
+./install.sh -DryRun     # print what it would do, change nothing
+./install.sh
 ```
 
-## How it works
+Everything lands in `$HOME/.local`; installing needs no root and writes nothing
+system-wide:
+
+```
+~/.local/bin/osswitch
+~/.local/share/applications/osswitch-windows.desktop
+~/.local/share/applications/osswitch-manjaro.desktop
+~/.local/share/icons/hicolor/{48x48,256x256}/apps/osswitch-{windows,manjaro}.png
+```
+
+`./install.sh -Remove` takes all of it back out. The icons are rendered from the
+same artwork the Windows half ships, so the two launchers look alike.
+
+**One dependency worth having: `zenity` (or `yad`).** The launchers ask before
+rebooting and show a dialog if anything fails; neither tool is present on a
+stock Manjaro install. `sudo pacman -S zenity`. The script also works fine from
+a terminal without them — it just does not ask, because you typed the command.
+
+### The two launchers
+
+| Launcher | Does |
+| --- | --- |
+| **Switch to Windows 11** | `osswitch windows` — queue a one-shot override for Windows, then reboot |
+| **Switch to Manjaro** | `osswitch manjaro` — queue Manjaro (which *replaces* a pending Windows override), then reboot |
+
+Both ask "Reboot into … now?" first, and if anything fails they put the reason in
+a dialog rather than dying silently where nobody will see it.
+
+The Manjaro launcher deliberately does not take the "it is already the default,
+just reboot" shortcut. If a Windows override is still queued and unused, a plain
+reboot follows it into Windows — the exact opposite of what the button promises.
+Writing `BootNext=Manjaro` settles the question instead of assuming it.
+
+### Before you trust it with a real reboot
+
+```bash
+osswitch status                    # read-only, needs no root at all
+osswitch windows --dry-run         # applies, verifies, prints, does NOT reboot
+osswitch restore                   # drop the pending switch
+osswitch windows                   # the real thing
+```
+
+`--dry-run` is the same gate as the Windows half's `-DryRun`: it writes and
+reads back the firmware variable and then stops. If the write did not land, it
+refuses to reboot.
+
+### Tests
+
+```bash
+./linux/tests/test_osswitch.sh              # 95 checks
+./linux/tests/test_osswitch.sh -Mutants     # plus 11 deliberate breakages
+```
+
+The suite runs the **real** script against a stub `efibootmgr` that keeps fake
+boot variables in a temp file, a stub `systemctl` that records reboot requests
+instead of performing them, and a stub `pkexec` that wipes the environment the
+way real polkit does. **Nothing in it can reboot anything.**
+
+Covered: read-only `status`/`list`, both dry-run directions, the reboot, an
+already-queued switch, a missing target, firmware that ignores the write,
+`restore` with and without a pending override, a firmware that ignores the
+delete, bad input, the dialog asking exactly once across an escalation, a
+declined reboot, and a replay of
+`tests/fixture-real-efibootmgr-enum.txt` — real `efibootmgr -v` output captured
+from this machine (with the disk serial blanked), which is what pins the parser
+to reality rather than to an assumption.
+
+`-Mutants` then breaks the script eleven ways and requires the suite to fail on
+each, so a green suite means something: no write-back verification, verifying
+the wrong value, `--dry-run` ignored, `restore` using the wrong `efibootmgr`
+flag, `restore` not checking its own result, a silent fallback when the target
+entry is missing, entry parsing reverted to field splitting, the error dialog
+removed, the reboot question removed, the question asked twice across an
+escalation, and pkexec forwarding that drops the flags. An anchor that no longer
+matches is reported as `[skip]`, never as a blind pass.
+
+### Test seams
+
+| Seam | Why |
+| --- | --- |
+| `--efibootmgr PATH` / `--systemctl PATH` | run the real script against the stubs |
+| `OSSWITCH_DRY_RUN=1` | the dry run, as an environment variable |
+| `OSSWITCH_TEST_ASSUME_ROOT=1` | skip the pkexec re-exec. Grants nothing: `efibootmgr` still refuses an unprivileged process |
+
+### Four things this machine taught us
+
+**`-b` is not `--delete-bootnext`.** The first version of `restore` called
+`efibootmgr -b`, which is *modify BootXXXX* — it takes an argument, and given
+none it just errors. `osswitch cancel` therefore did nothing at all, and looked
+like it had. The flag is `-N` / `--delete-bootnext`, and the suite asserts on
+the exact call.
+
+**pkexec throws the environment away.** It runs the target with a sanitised
+environment, so anything chosen by an environment variable — the GUI mode, the
+dry run — is simply gone by the time the script is root. The launcher modes are
+therefore argv flags (`--gui`, `--dry-run`), which pkexec passes through
+untouched, and the whole argv is re-executed verbatim.
+
+**A flag that pkexec drops is a feature that silently does nothing.** Both of
+those are covered by mutation: break the forwarding, and the suite must catch a
+reboot that happens during a dry run.
+
+**sed cannot parse this output.** `efibootmgr -v` puts a TAB between an entry's
+description and its device path. A bracket expression like `[^\t]` is not a tab
+in sed — it is "neither backslash nor t" — so descriptions get quietly
+truncated (`Manjaro` → `Manjar`). The parsing is awk, slicing on the real tab.
+
+---
+
+## Windows half (bcdedit)
+
+### How it works
 
 It sets a **one-shot boot override** on the UEFI firmware boot manager — the same
 idea as the Linux half's `efibootmgr -n` (BootNext). The firmware uses it for the
@@ -43,7 +184,7 @@ returns only the manager block. The entry list lives under
 `Boot####` ones, with the order spread over indented continuation lines. The
 parser handles both the new and the legacy shapes.
 
-## Safety
+### Safety
 
 **Every GUID is read from the live boot store, every time.** Nothing is
 hardcoded. The GUID visible on the Linux side,
@@ -59,7 +200,7 @@ silently did nothing, it reports a verification failure and **does not reboot**.
 **`-DryRun` writes and verifies but does not reboot.** Same gate as the Linux
 half's `OSSWITCH_DRY_RUN=1`. Use it first.
 
-## Install
+### Install
 
 Administrator rights are required — `bcdedit` only opens the boot store for an
 elevated process.
@@ -79,7 +220,7 @@ Then from an **elevated** PowerShell ("Run as administrator"):
 
 The script calls `exit`, so run it from a script rather than dot-sourcing it.
 
-## Before letting Manjaro write to the Windows partition
+### Before letting Manjaro write to the Windows partition
 
 Hibernation is currently **on**. That leaves the volume in a hibernated state,
 which Linux sees as unclean. `osswitch status` prints the current state; turn it
@@ -91,7 +232,7 @@ powercfg /h off
 
 That deletes `hiberfil.sys` and also disables Fast Startup.
 
-## Tests
+### Tests
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\test_osswitch.ps1
@@ -128,7 +269,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\live_test.ps1   # el
 Reads the real firmware, does a dry-run switch, restores, and shows the boot
 order before and after. Every switching step is `-DryRun`, so it never reboots.
 
-## Test seams
+### Test seams
 
 | Seam | Why |
 | --- | --- |
@@ -139,7 +280,7 @@ order before and after. Every switching step is `-DryRun`, so it never reboots.
 `OSSWITCH_DEBUG=1` prints the failing line when something goes wrong.
 `OSSWITCH_TEST_TRACE=1` makes the suite print what each child process printed.
 
-## Desktop shortcuts
+### Desktop shortcuts
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\install_shortcuts.ps1
@@ -226,22 +367,40 @@ Small frames are written as true 32bpp DIBs, not PNG-compressed ones: a
 PNG-compressed 32px frame parses as coloured noise on Windows, so the icons are
 verified by extracting frames back out and looking at them.
 
-## Files
+### Files (Windows half)
 
 ```
-osswitch.ps1                        the boot-order switcher itself
-tools/boot-manjaro.ps1              the Manjaro icon: clear override, restart
-tools/osswitch-launch.ps1           the Windows icon: full switcher, elevated
-tools/osswitch-shortcut.cmd         entry point; dispatches on the target
-tools/install_shortcuts.ps1         creates / removes the desktop icons
-tools/make_icon.ps1                 builds manjaro.ico and windows.ico
-tests/test_osswitch.ps1             63 checks + 8 mutation checks
-tests/test_launcher.ps1             36 checks on the desktop launcher
-tests/live_test.ps1                 dry-run test against the real boot store
-tests/probe_what_writes.ps1         what bcdedit will and will not write here
+osswitch.ps1                          the Windows half: the switcher itself
+tools/boot-manjaro.ps1                the Manjaro icon: clear override, restart
+tools/osswitch-launch.ps1             the Windows icon: full switcher, elevated
+tools/osswitch-shortcut.cmd           entry point; dispatches on the target
+tools/install_shortcuts.ps1           creates / removes the desktop icons
+tools/make_icon.ps1                   builds manjaro.ico and windows.ico
+tests/test_osswitch.ps1               63 checks + 8 mutation checks
+tests/test_launcher.ps1               36 checks on the desktop launcher
+tests/live_test.ps1                   dry-run test against the real boot store
+tests/probe_what_writes.ps1           what bcdedit will and will not write here
 tests/fixture-real-firmware-enum.txt  real bcdedit output, replayed in the suite
-tests/stub/bcd.cmd                  stub bcdedit entry point
-tests/stub/bcd.ps1                  fake firmware: /enum, /set, /deletevalue
-tests/stub/shutdown.cmd             stub reboot
-assets/                             the icons
+tests/stub/bcd.cmd                    stub bcdedit entry point
+tests/stub/bcd.ps1                    fake firmware: /enum, /set, /deletevalue
+tests/stub/shutdown.cmd               stub reboot
+assets/                               the icons, shared with the Linux half
+```
+
+## Files (Linux half)
+
+```
+linux/osswitch                        the Linux half: the switcher itself
+linux/install.sh                      installs/removes the command and launchers
+linux/osswitch-windows.desktop.in     launcher template, @HOME@ rendered on install
+linux/osswitch-manjaro.desktop.in     launcher template, @HOME@ rendered on install
+linux/tests/test_osswitch.sh          95 checks + 11 mutation checks
+linux/tests/mutate.py                 the eleven breakages, by name
+linux/tests/mutants.tsv               which scenario must catch which breakage
+linux/tests/capture_fixture.py        refreshes the fixture from real hardware
+linux/tests/fixture-real-efibootmgr-enum.txt  real efibootmgr output, serial blanked
+linux/tests/stub/efibootmgr           fake firmware: BootNext, -N, ignores-write modes
+linux/tests/stub/systemctl            stub reboot
+linux/tests/stub/pkexec               stub escalation, wipes the environment
+linux/tests/stub/zenity, stub/yad     stub dialogs
 ```

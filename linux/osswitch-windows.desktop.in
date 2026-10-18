@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Switch to Windows 11
+GenericName=Reboot into Windows 11
+Comment=Reboot straight into Windows 11, skipping the GRUB menu
+Exec=@HOME@/.local/bin/osswitch --gui windows
+Icon=osswitch-windows
+Terminal=false
+Categories=System;
+Keywords=windows;reboot;boot;dualboot;switch;

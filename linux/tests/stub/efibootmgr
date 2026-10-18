@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Stub efibootmgr: fake firmware boot variables, held in a JSON-ish state file.
+#
+# It exists so tests/test_osswitch.sh can drive the real osswitch script
+# end-to-end without touching this machine's firmware and without rebooting.
+# The output is byte-shaped like the real thing - TAB between description and
+# device path, indented `dp:` / `data:` continuation lines - because that shape
+# is what the real parser has to survive.
+#
+# State lives in $OSSWITCH_STUB_STATE (default /tmp/osswitch-stub.json):
+#   {"bootorder":"0003,0004,0000,0001","bootnext":"","ignores_write":false}
+#
+# Test-only behaviour:
+#   OSSWITCH_STUB_IGNORES_WRITE=1  -n exits 0 but records nothing, like firmware
+#                                    that silently rejects the write. This is the
+#                                    case osswitch must refuse to reboot through.
+#   OSSWITCH_STUB_FAIL_DELETE=1    -N leaves BootNext in place.
+#   OSSWITCH_STUB_ENTRIES=<file>   replay a captured `efibootmgr -v` dump instead
+#                                    of the built-in entries (the real fixture).
+
+set -uo pipefail
+
+STATE="${OSSWITCH_STUB_STATE:-/tmp/osswitch-stub.json}"
+ENTRIES="${OSSWITCH_STUB_ENTRIES:-}"
+
+DEFAULT_ENTRIES='BootCurrent: 0003
+Timeout: 0 seconds
+BootOrder: 0003,0004,0000,0001
+Boot0000* UEFI PM9A1 NVMe Samsung 512GB	HD(1,GPT,00000000-0000-0000-0000-000000000000,0x800,0x64000)/\EFI\Boot\BootX64.efi{auto_created_boot_option}
+      dp: 04 01 2a 00 01 00 00 00 00 08 00 00 00 00 00 00 00 40 06 00 00 00 00 00
+    data: 4e ac 08 81 11 9f 59 4d 85 0e e2 1a 52 2c 59 b2
+Boot0001* UEFI HTTPs Boot	PciRoot(0x0)/Pci(0x1f,0x6)/MAC(000000000000,0)/IPv4(0.0.0.0,0,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)/Uri(){auto_created_boot_option}
+      dp: 02 01 0c 00 d0 41 03 0a 00 00 00 00 / 01 01 06 00 06 1f / 03 0b 25 00
+    data: 4e ac 08 81 11 9f 59 4d 85 0e e2 1a 52 2c 59 b2
+Boot0003* Manjaro	HD(1,GPT,00000000-0000-0000-0000-000000000000,0x800,0x64000)/\EFI\Manjaro\grubx64.efi
+      dp: 04 01 2a 00 01 00 00 00 00 08 00 00 00 00 00 00 00 40 06 00 00 00 00 00
+    data: 57 49 4e 44 4f 57 53 00 01 00 00 00 88 00 00 00
+Boot0004* Windows Boot Manager	HD(1,GPT,00000000-0000-0000-0000-000000000000,0x800,0x64000)/\EFI\Microsoft\Boot\bootmgfw.efi
+      dp: 04 01 2a 00 01 00 00 00 00 08 00 00 00 00 00 00 00 40 06 00 00 00 00 00
+    data: 57 49 4e 44 4f 57 53 00 01 00 00 00 88 00 00 00 78 00 00 00 42 00 43 00 44 00 4f 00 42 00 4a 00 45 00 43 00 54 00 3d 00 7b 00 39 00 64 00 65 00 61 00 38 00 36 00 32 00 63 00 2d 00 35 00 63 00 64 00 64 00 2d 00 34 00 65 00 37 00 30 00 2d 00 61 00 63 00 63 00 31 00 2d 00 66 00 33 00 32 00 62 00 33 00 34 00 34 00 64 00 34 00 37 00 39 00 35 00 7d 00'
+
+boot_next() {
+  [[ -f $STATE ]] || return 0
+  sed -n 's/.*"bootnext":"\([^"]*\)".*/\1/p' "$STATE"
+}
+
+boot_order() {
+  [[ -f $STATE ]] || { echo "0003,0004,0000,0001"; return 0; }
+  sed -n 's/.*"bootorder":"\([^"]*\)".*/\1/p' "$STATE"
+}
+
+save() {
+  local nxt="$1" order; order=$(boot_order)
+  printf '{"bootorder":"%s","bootnext":"%s"}\n' "$order" "$nxt" >"$STATE"
+}
+
+# Every invocation is logged. The suite asserts on this log so a green run can
+# never be the result of a stub that was silently never called.
+printf '%s\n' "$*" >>"${OSSWITCH_STUB_LOG:-/dev/null}"
+
+verbose=0
+bootnext_set=""
+delete_bootnext=0
+
+while (( $# )); do
+  case "$1" in
+    -v|--verbose)   verbose=1 ;;
+    -n|--bootnext)  bootnext_set="$2"; shift ;;
+    -N|--delete-bootnext) delete_bootnext=1 ;;
+    -V|--version)   echo "efibootmgr stub"; exit 0 ;;
+    -*)             : ;;   # unknown flags are ignored, like the real tool's laxness
+  esac
+  shift
+done
+
+if (( delete_bootnext )); then
+  if [[ ${OSSWITCH_STUB_FAIL_DELETE:-0} == 1 ]]; then
+    exit 0                      # accepted the request, changed nothing
+  fi
+  save "" >/dev/null
+  exit 0
+fi
+
+if [[ -n $bootnext_set ]]; then
+  [[ ${OSSWITCH_STUB_IGNORES_WRITE:-0} == 1 ]] && exit 0
+  save "$bootnext_set" >/dev/null
+  exit 0
+fi
+
+if (( verbose )); then
+  nxt=$(boot_next)
+  echo "BootCurrent: 0003"
+  echo "Timeout: 0 seconds"
+  echo "BootOrder: $(boot_order)"
+  [[ -n $nxt ]] && echo "BootNext: $nxt"
+  if [[ -n $ENTRIES ]]; then cat "$ENTRIES"; else printf '%s\n' "$DEFAULT_ENTRIES"; fi
+  exit 0
+fi
+
+echo "BootCurrent: 0003"
+echo "Timeout: 0 seconds"
+echo "BootOrder: $(boot_order)"
+exit 0

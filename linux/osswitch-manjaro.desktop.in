@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Switch to Manjaro
+GenericName=Reboot into Manjaro
+Comment=Reboot straight into Manjaro, skipping the GRUB menu
+# One Exec line only: it writes BootNext=Manjaro, which REPLACES any pending
+# Windows override rather than fighting it. A plain reboot with a Windows
+# override still queued would go to Windows - the opposite of what this button
+# promises - so this deliberately never takes the "just reboot" shortcut.
+Exec=@HOME@/.local/bin/osswitch --gui manjaro
+Icon=osswitch-manjaro
+Terminal=false
+Categories=System;
+Keywords=manjaro;linux;reboot;boot;dualboot;switch;

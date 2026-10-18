@@ -1,0 +1,339 @@
+#!/usr/bin/env bash
+# osswitch (Linux half) - reboot straight into the other OS, bypassing the GRUB menu.
+#
+#   osswitch status      # what boots by default, and is anything pending
+#   osswitch list        # the UEFI boot entries, nothing else
+#   osswitch windows     # boot Windows 11 next time
+#   osswitch manjaro     # boot Manjaro next time
+#   osswitch restore      # drop a pending one-time boot (alias: cancel)
+#
+# Uses UEFI BootNext (efibootmgr -n), which the firmware consumes on the next
+# boot and then falls back to the normal BootOrder. Nothing is permanently
+# reordered, so a failed switch always drops you back into GRUB.
+#
+# The Windows half is osswitch.ps1 in the repo root; it does the same job with
+# bcdedit. Keep the two command surfaces identical.
+
+set -euo pipefail
+
+MANJARO_DESC="Manjaro"
+WINDOWS_DESC="Windows Boot Manager"
+
+# Test seams. The suite points these at stubs; production never sets them.
+EFIBOOTMGR="${OSSWITCH_EFIBOOTMGR:-efibootmgr}"
+SYSTEMCTL="${OSSWITCH_SYSTEMCTL:-systemctl}"
+
+die() { printf 'osswitch: %s\n' "$*" >&2; exit 1; }
+
+# Escalate by re-running ourselves with pkexec.
+#
+# pkexec is invoked as a CHILD rather than exec'd. Two reasons:
+#   1. `exec pkexec` replaces this shell, so an ERR trap can never report the
+#      failure and a 127/dismissed-auth looks exactly like a dead button.
+#   2. It lets us turn pkexec's failure into a visible message.
+# Do NOT pass --no-non-cert: polkit 127 here has no such option and exits 127
+# ("Cannot run program --no-non-cert") without ever showing a prompt.
+#
+# The full original argv is forwarded. That matters more than it looks: pkexec
+# sanitises the environment, so a mode selected by an environment variable
+# (OSSWITCH_GUI, OSSWITCH_DRY_RUN) is GONE in the root process, and the desktop
+# button then fails in silence. Modes that must survive escalation are argv
+# flags --gui / --dry-run, which pkexec passes through untouched.
+need_root() {
+  # Grants nothing: it only skips the re-exec. efibootmgr still refuses an
+  # unprivileged process, exactly as it does without this.
+  [[ ${OSSWITCH_TEST_ASSUME_ROOT:-0} == 1 ]] && return 0
+  [[ $EUID -eq 0 ]] && return 0
+
+  if command -v pkexec >/dev/null 2>&1; then
+    local rc=0
+    pkexec "$0" "$@" || rc=$?
+    if (( rc != 0 )); then
+      case $rc in
+        126|127) die "privilege escalation failed (pkexec exit $rc). Open a terminal and run: sudo $0 $*" ;;
+        *)       die "switch aborted (pkexec exit $rc - was the password prompt dismissed?)" ;;
+      esac
+    fi
+    exit 0
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -n "$0" "$@" || die "sudo needs a password; run from a terminal."
+    exit 0
+  else
+    die "need root but found neither pkexec nor sudo."
+  fi
+}
+
+have_efibootmgr() { command -v "$EFIBOOTMGR" >/dev/null 2>&1 || die "efibootmgr not installed (pacman -S efibootmgr)"; }
+
+# efibootmgr -v prints one entry per line:
+#   Boot0004* Windows Boot Manager<TAB>HD(1,GPT,...)/\EFI\Microsoft\Boot\bootmgfw.efi
+#   dp: 04 04 46 00 5c 00 45 00 ...            <- indented continuation lines
+# and a summary block:
+#   BootOrder: 0003,0004,0000,0001
+#   BootNext: 0004                              <- only when one is pending
+#
+# We want the id (BootXXXX) plus the description, which is the text between the
+# marker and the TAB. Parsed off the raw line with match()/index() rather than
+# field splitting: -F'\t' makes NF==1 for these lines, so a $2..$NF loop silently
+# yields an empty description and every lookup fails.
+
+# Print "<id><TAB><description>" for the entry whose description contains $1.
+_find_entry() {
+  local want="$1"
+  "$EFIBOOTMGR" -v | awk -v want="$want" '
+    match($0, /^Boot[0-9A-F][0-9A-F][0-9A-F][0-9A-F]\*?/) {
+      id  = substr($0, RSTART + 4, 4)
+      rest = substr($0, RSTART + RLENGTH)
+      sub(/^[[:space:]]+/, "", rest)
+      desc = rest
+      if (index(desc, "\t") > 0) desc = substr(desc, 1, index(desc, "\t") - 1)
+      if (index(tolower(desc), tolower(want)) > 0) { print id "\t" desc; exit }
+    }'
+}
+
+# Resolve a boot entry by its human description. Prints the BootXXXX id.
+resolve_entry() {
+  local out; out=$(_find_entry "$1")
+  [[ -n $out ]] || die "no UEFI boot entry matching '$1'. Run: osswitch list"
+  printf '%s\n' "${out%%$'\t'*}"
+}
+
+# Same scan, but matching the id instead of the description.
+_find_entry_by_id() {
+  local want="$1"
+  "$EFIBOOTMGR" -v | awk -v want="$want" '
+    match($0, /^Boot[0-9A-F][0-9A-F][0-9A-F][0-9A-F]\*?/) {
+      id  = substr($0, RSTART + 4, 4)
+      rest = substr($0, RSTART + RLENGTH)
+      sub(/^[[:space:]]+/, "", rest)
+      desc = rest
+      if (index(desc, "\t") > 0) desc = substr(desc, 1, index(desc, "\t") - 1)
+      if (id == want) { print id "\t" desc; exit }
+    }'
+}
+
+describe_entry() {
+  local out; out=$(_find_entry_by_id "$1")
+  printf '%s\n' "${out#*$'\t'}"
+}
+
+# Ask before rebooting. Only ever reached from a launcher, where a stray
+# double-click would otherwise restart a machine with unsaved work - the same
+# reason the Windows shortcuts ask. A terminal run never asks: you typed the
+# command.
+#
+# zenity and yad are both just front-ends for the same GTK dialog; neither is
+# installed by default on every GNOME box, so take whichever one exists rather
+# than demanding a specific package.
+GUI_TOOL=""
+have_gui_tool() {
+  local t
+  for t in zenity yad; do
+    if command -v "$t" >/dev/null 2>&1; then GUI_TOOL=$t; return 0; fi
+  done
+  return 1
+}
+
+confirm_reboot() {
+  have_gui_tool || die "no dialog tool found (pacman -S zenity), or run osswitch from a terminal"
+  # The dialog's own exit status is the answer, so it must not be allowed to
+  # trip `set -e` on the way past.
+  local rc=0
+  case "$GUI_TOOL" in
+    yad)
+      yad --question --title="osswitch" --text="Reboot into $1 now?\n\nAnything unsaved will be lost." \
+          --button="Reboot:0" --button="Cancel:1" >/dev/null 2>&1 || rc=$? ;;
+    *)
+      zenity --question --title="osswitch" \
+             --text="Reboot into $1 now?$'\n\n'Anything unsaved will be lost." \
+             --ok-label="Reboot" --cancel-label="Cancel" >/dev/null 2>&1 || rc=$? ;;
+  esac
+  # Either "Cancel" or a dialog that could not be shown both land here. Neither
+  # should reboot the machine, so both are a quiet no-op - not an error dialog
+  # aimed at someone who simply declined.
+  (( rc == 0 )) || { printf 'osswitch: cancelled - nothing was changed.\n' >&2; exit 0; }
+}
+
+# Error path for --gui. Same two tools, same fallback.
+show_error_dialog() { # $1 = message
+  if have_gui_tool; then
+    case "$GUI_TOOL" in
+      yad)    yad --error --title="osswitch" --text="$1" --button="Close:0" >/dev/null 2>&1 || true ;;
+      *)      zenity --error --title="osswitch" --text="$1" >/dev/null 2>&1 || true ;;
+    esac
+  else
+    notify-send "osswitch failed" "$1" 2>/dev/null || true
+  fi
+}
+
+bootnext_id() { "$EFIBOOTMGR" -v | sed -n 's/^BootNext: //p'; }
+
+show_list() {
+  have_efibootmgr
+  # Same awk scan as the lookups, so `list` and the resolver can never disagree
+  # about what an entry is called. sed cannot do this job: a bracket expression
+  # like [^\t] is not a tab in sed, so it silently truncates descriptions ending
+  # in "t" ("Manjaro" -> "Manjar").
+  "$EFIBOOTMGR" -v | awk '
+    match($0, /^Boot[0-9A-F][0-9A-F][0-9A-F][0-9A-F]\*?/) {
+      id   = substr($0, RSTART + 4, 4)
+      mark = substr($0, RSTART + 8, 1) == "*" ? "*" : " "
+      rest = substr($0, RSTART + RLENGTH)
+      sub(/^[[:space:]]+/, "", rest)
+      desc = rest
+      if (index(desc, "\t") > 0) desc = substr(desc, 1, index(desc, "\t") - 1)
+      printf "  Boot%s%s %s\n", id, mark, desc
+    }'
+}
+
+show_status() {
+  have_efibootmgr
+  echo "Normal boot order : $("$EFIBOOTMGR" | sed -n 's/^BootOrder: //p')"
+  local nxt; nxt=$(bootnext_id)
+  if [[ -n $nxt ]]; then
+    echo "One-time target   : $nxt  ($(describe_entry "$nxt"))"
+    echo "                    this boot goes there; the override is then consumed."
+  else
+    echo "One-time target   : (none - normal boot order applies)"
+  fi
+  echo
+  echo "Boot entries:"
+  show_list
+  echo
+  echo "Changing any of this needs root; efibootmgr only opens the firmware"
+  echo "variables for a privileged process. Nothing here is permanent."
+}
+
+clear_bootnext() {
+  have_efibootmgr; need_root "${ORIG[@]}"
+  # -N / --delete-bootnext. NOT -b: that is "modify BootXXXX", which takes an
+  # argument and means something entirely different - an earlier version of this
+  # script used it and `osswitch cancel` silently did nothing.
+  "$EFIBOOTMGR" -N || die "efibootmgr could not delete BootNext"
+  if [[ -n $(bootnext_id) ]]; then
+    die "firmware still reports a one-time boot target after deleting it"
+  fi
+  printf 'osswitch: cleared the pending one-time boot - normal order applies again.\n'
+}
+
+set_bootnext() {
+  local target="$1"; shift
+  # Escalate with the ORIGINAL argv, which already contains the command word.
+  # Re-passing it here would re-run ourselves as `osswitch windows windows`
+  # and die on the duplicate - so the command is taken from $1 and only the
+  # flags are dropped.
+  have_efibootmgr
+
+  # Resolve first, while still unprivileged: reading the boot entries needs no
+  # root, and it is what lets the question name the destination. Asking after
+  # the password prompt would mean two dialogs in the wrong order.
+  local id desc
+  case "$target" in
+    windows) id=$(resolve_entry "$WINDOWS_DESC");;
+    manjaro) id=$(resolve_entry "$MANJARO_DESC");;
+    *) die "unknown target '$target' (use: windows | manjaro)";;
+  esac
+  desc=$(describe_entry "$id")
+
+  if (( GUI && ! CONFIRMED )); then
+    confirm_reboot "$desc"
+    # The escalated process gets the same argv, so it would ask a second time.
+    CONFIRMED=1
+    ESCALATE_ARGS+=(--confirmed)
+  fi
+
+  need_root "${ESCALATE_ARGS[@]}"
+
+  # Already queued for exactly this: say so rather than pretending to switch,
+  # but still reboot - the pending override does exactly what was asked for.
+  if [[ $(bootnext_id) == "$id" ]]; then
+    printf 'osswitch: %s (%s) is already the one-time target - nothing to change.\n' "$desc" "$id"
+  else
+    printf 'osswitch: booting into %s (%s) on next start...\n' "$desc" "$id"
+    "$EFIBOOTMGR" -n "$id"
+
+    # Verify the firmware actually took it before rebooting. efibootmgr exits 0
+    # even when the write is rejected, so a blind reboot can silently land back
+    # in GRUB.
+    local nxt; nxt=$(bootnext_id)
+    [[ $nxt == "$id" ]] || die "firmware refused BootNext=$id (shows '${nxt:-none}') - not rebooting."
+  fi
+
+  # Dry-run gate. --dry-run writes and verifies BootNext but never reboots. This
+  # is the ONLY safe way to exercise this script in a test, and it exists
+  # because an earlier harness run re-executed through pkexec (which strips PATH,
+  # defeating stubbed efibootmgr/systemctl) and rebooted the box.
+  if [[ $DRY_RUN == 1 ]]; then
+    printf 'osswitch: DRY RUN - BootNext=%s verified, NOT rebooting.\n' "$id"
+    printf 'osswitch: run "osswitch restore" to drop the pending switch.\n'
+    return 0
+  fi
+
+  sync
+  printf 'osswitch: verified BootNext=%s, rebooting...\n' "$id"
+  "$SYSTEMCTL" reboot
+}
+
+usage() {
+  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+  cat <<'EOF'
+
+Options:
+  --dry-run        apply and verify the change, but do not reboot
+  --gui            show a dialog if anything fails (used by the desktop button)
+  -h, --help       this text
+
+Test seams (do not set these by hand):
+  OSSWITCH_EFIBOOTMGR / OSSWITCH_SYSTEMCTL   run a different binary
+  OSSWITCH_TEST_ASSUME_ROOT=1                skip the pkexec re-exec
+EOF
+}
+
+main() {
+  # Remembered verbatim for the pkexec re-exec: the escalated process has to be
+  # handed the exact same command line, including every flag, because its
+  # environment is not the same one.
+  ORIG=("$@")
+  ESCALATE_ARGS=("$@")
+  local cmd=""
+  GUI=0
+  CONFIRMED=0
+  DRY_RUN=0
+  [[ ${OSSWITCH_DRY_RUN:-0} == 1 ]] && DRY_RUN=1
+
+  while (( $# )); do
+    case "$1" in
+      --dry-run)   DRY_RUN=1 ;;
+      --gui)       GUI=1 ;;
+      --confirmed) CONFIRMED=1 ;;   # set internally when re-escalating after asking
+      --efibootmgr) [[ $# -ge 2 ]] || die "--efibootmgr needs a path"; EFIBOOTMGR="$2"; shift ;;
+      --systemctl)  [[ $# -ge 2 ]] || die "--systemctl needs a path"; SYSTEMCTL="$2"; shift ;;
+      -h|--help)    usage; return 0 ;;
+      -*)           die "unknown option '$1' (try: osswitch --help)" ;;
+      *)            [[ -z $cmd ]] || die "unexpected argument '$1'"; cmd="$1" ;;
+    esac
+    shift
+  done
+  cmd="${cmd:-status}"
+
+  # GUI mode, error path only. Launched from the desktop, stdout goes nowhere and
+  # a failure is indistinguishable from "the button is broken", so anything that
+  # fails is surfaced in a dialog instead of dying silently. Passed as a flag,
+  # not an env var, because pkexec drops the environment on the way to root.
+  if (( GUI )); then
+    exec 2> >(tee "${OSSWITCH_ERRFILE:-/tmp/osswitch-err.$$}" >&2)
+    trap 'rc=$?; if (( rc != 0 )); then
+             show_error_dialog "$(cat "${OSSWITCH_ERRFILE:-/tmp/osswitch-err.$$}" 2>/dev/null || echo "osswitch failed (exit $rc)")"
+         fi; rm -f "${OSSWITCH_ERRFILE:-/tmp/osswitch-err.$$}"' EXIT
+  fi
+
+  case "$cmd" in
+    windows|manjaro) set_bootnext "$cmd";;
+    list)            show_list;;
+    status)          show_status;;
+    restore|cancel)  clear_bootnext;;
+    *) die "unknown command '$cmd' (use: status | list | windows | manjaro | restore)";;
+  esac
+}
+
+main "$@"
