@@ -1,0 +1,12 @@
+# Runtime state written by osswitch: it records whether a one-shot boot override
+# is currently pending, so it must never be committed.
+.osswitch-state.json
+
+# Diagnostic log written by the desktop wrapper / launcher.
+*.log
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*~

@@ -1,0 +1,41 @@
+Firmware Boot Manager
+---------------------
+identifier              {fwbootmgr}
+displayorder            {dc32beeb-ca95-11f1-8cd8-806e6f6e6963}
+                        {bootmgr}
+                        {aeccae1b-c6df-11f1-b787-a5e08443f1ab}
+                        {aeccae17-c6df-11f1-b787-a5e08443f1ab}
+timeout                 0
+
+Windows Boot Manager
+--------------------
+identifier              {bootmgr}
+device                  partition=\Device\HarddiskVolume1
+path                    \EFI\Microsoft\Boot\bootmgfw.efi
+description             Windows Boot Manager
+locale                  en-GB
+inherit                 {globalsettings}
+default                 {current}
+resumeobject            {aeccae1c-c6df-11f1-b787-a5e08443f1ab}
+displayorder            {current}
+toolsdisplayorder       {memdiag}
+timeout                 30
+
+Firmware Application (101fffff)
+-------------------------------
+identifier              {aeccae17-c6df-11f1-b787-a5e08443f1ab}
+description             UEFI HTTPs Boot
+
+Firmware Application (101fffff)
+-------------------------------
+identifier              {aeccae1b-c6df-11f1-b787-a5e08443f1ab}
+device                  partition=\Device\HarddiskVolume1
+path                    \EFI\Boot\BootX64.efi
+description             UEFI PM9A1 NVMe Samsung 512GB
+
+Firmware Application (101fffff)
+-------------------------------
+identifier              {dc32beeb-ca95-11f1-8cd8-806e6f6e6963}
+device                  partition=\Device\HarddiskVolume1
+path                    \EFI\Manjaro\grubx64.efi
+description             Manjaro
