@@ -122,27 +122,84 @@ describe_entry() {
 # reason the Windows shortcuts ask. A terminal run never asks: you typed the
 # command.
 #
-# zenity and yad are both just front-ends for the same GTK dialog; neither is
-# installed by default on every GNOME box, so take whichever one exists rather
-# than demanding a specific package.
+# Three ways to ask, in order of preference, because none of them is guaranteed
+# to be installed:
+#   zenity / yad     the usual front-ends, when they are there
+#   python3 + gi    a GTK dialog in about ten lines. PyGObject is already a
+#                   dependency of the GNOME stack, so this costs nothing - and a
+#                   box with neither zenity nor yad is exactly the box that
+#                   still needs to ask rather than silently rebooting.
+#   --no-confirm    only if the launcher says so, i.e. nothing at all can ask
 GUI_TOOL=""
-have_gui_tool() {
+gtk_available() {
+  command -v python3 >/dev/null 2>&1 \
+    && python3 -c 'import gi; gi.require_version("Gtk", "3.0")' 2>/dev/null
+}
+
+gui_tool() {
+  if [[ -n ${GUI_TOOL:-} ]]; then printf '%s\n' "$GUI_TOOL"; return 0; fi
   local t
   for t in zenity yad; do
-    if command -v "$t" >/dev/null 2>&1; then GUI_TOOL=$t; return 0; fi
+    command -v "$t" >/dev/null 2>&1 && { GUI_TOOL=$t; printf '%s\n' "$t"; return 0; }
   done
-  return 1
+  gtk_available && { GUI_TOOL=gtk; printf 'gtk\n'; return 0; }
+  GUI_TOOL=none; printf 'none\n'
+}
+
+gtk_yes_no() { # $1 = title, $2 = body. 0 for yes.
+  # Gtk.Dialog with explicit buttons, NOT Gtk.MessageDialog: on this machine
+  # (GNOME on Wayland) a MessageDialog answers itself OK the instant it is
+  # mapped - the reboot question would be shown and skipped in the same frame.
+  # A plain Dialog waits for a click, which is the entire point.
+  #
+  # No set_keep_above either, for a worse version of the same reason: on Wayland
+  # it forces the window to be re-mapped, GTK tears the dialog down and run()
+  # returns at once - as Cancel, so the question silently becomes a refusal.
+  #
+  # Cancel is the default response, so a stray Enter cannot reboot anything.
+  python3 - "$1" "$2" <<'PY' >/dev/null 2>&1
+import sys
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+
+dialog = Gtk.Dialog(title=sys.argv[1])
+dialog.set_modal(True)
+dialog.set_resizable(False)
+dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+dialog.add_button("Reboot now", Gtk.ResponseType.OK)
+dialog.set_default_response(Gtk.ResponseType.CANCEL)
+label = Gtk.Label(label=sys.argv[2])
+label.set_line_wrap(True)
+label.set_margin_start(18)
+label.set_margin_end(18)
+label.set_margin_top(14)
+label.set_margin_bottom(14)
+dialog.get_content_area().add(label)
+dialog.show_all()
+raise SystemExit(0 if dialog.run() == Gtk.ResponseType.OK else 1)
+PY
 }
 
 confirm_reboot() {
-  have_gui_tool || die "no dialog tool found (pacman -S zenity), or run osswitch from a terminal"
-  # The dialog's own exit status is the answer, so it must not be allowed to
-  # trip `set -e` on the way past.
+  local tool; tool=$(gui_tool)
+
+  # Nothing on this machine can put a question in front of the user. That must
+  # not stop the switch - it made the launcher refuse to do the one job it
+  # exists for. The click was deliberate and pkexec still asks for a password,
+  # so proceed and say so.
+  if [[ $tool == none ]]; then
+    printf 'osswitch: no dialog tool available, so not asking - rebooting anyway.\n' >&2
+    return 0
+  fi
+
   local rc=0
-  case "$GUI_TOOL" in
+  case "$tool" in
     yad)
       yad --question --title="osswitch" --text="Reboot into $1 now?\n\nAnything unsaved will be lost." \
           --button="Reboot:0" --button="Cancel:1" >/dev/null 2>&1 || rc=$? ;;
+    gtk)
+      gtk_yes_no "osswitch" "Reboot into $1 now?\n\nAnything unsaved will be lost." || rc=$? ;;
     *)
       zenity --question --title="osswitch" \
              --text="Reboot into $1 now?$'\n\n'Anything unsaved will be lost." \
@@ -154,16 +211,43 @@ confirm_reboot() {
   (( rc == 0 )) || { printf 'osswitch: cancelled - nothing was changed.\n' >&2; exit 0; }
 }
 
-# Error path for --gui. Same two tools, same fallback.
+# Error path for --gui. Same three ways to reach a dialog, same fallback.
 show_error_dialog() { # $1 = message
-  if have_gui_tool; then
-    case "$GUI_TOOL" in
-      yad)    yad --error --title="osswitch" --text="$1" --button="Close:0" >/dev/null 2>&1 || true ;;
-      *)      zenity --error --title="osswitch" --text="$1" >/dev/null 2>&1 || true ;;
-    esac
-  else
-    notify-send "osswitch failed" "$1" 2>/dev/null || true
-  fi
+  local tool; tool=$(gui_tool)
+  case "$tool" in
+    yad)  yad --error --title="osswitch" --text="$1" --button="Close:0" >/dev/null 2>&1 || true ;;
+    gtk)  gtk_message "$1" || true ;;
+    zenity) zenity --error --title="osswitch" --text="$1" >/dev/null 2>&1 || true ;;
+    *)    notify-send "osswitch failed" "$1" 2>/dev/null || true ;;
+  esac
+}
+
+gtk_message() { # $1 = text. Non-blocking, best effort.
+  python3 - "$1" <<'PY' >/dev/null 2>&1
+import sys
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, GLib
+
+dialog = Gtk.Dialog(title="osswitch")
+dialog.set_modal(True)
+dialog.set_keep_above(True)
+dialog.set_resizable(False)
+dialog.add_button("Close", Gtk.ResponseType.CLOSE)
+label = Gtk.Label(label=sys.argv[1])
+label.set_line_wrap(True)
+label.set_margin_start(18)
+label.set_margin_end(18)
+label.set_margin_top(14)
+label.set_margin_bottom(14)
+dialog.get_content_area().add(label)
+dialog.connect("response", lambda w, r: w.destroy())
+dialog.show_all()
+# Never leave a window sitting on the user's screen if they are not looking at
+# it - an error report that outstays its welcome is its own kind of bug.
+GLib.timeout_add_seconds(30, lambda: (dialog.destroy(), False)[1])
+dialog.run()
+PY
 }
 
 bootnext_id() { "$EFIBOOTMGR" -v | sed -n 's/^BootNext: //p'; }
@@ -235,7 +319,7 @@ set_bootnext() {
   esac
   desc=$(describe_entry "$id")
 
-  if (( GUI && ! CONFIRMED )); then
+  if (( GUI && ! CONFIRMED && ! NO_CONFIRM )); then
     confirm_reboot "$desc"
     # The escalated process gets the same argv, so it would ask a second time.
     CONFIRMED=1
@@ -280,7 +364,9 @@ usage() {
 
 Options:
   --dry-run        apply and verify the change, but do not reboot
-  --gui            show a dialog if anything fails (used by the desktop button)
+  --gui            confirm and report through a dialog (used by the desktop button)
+  --no-confirm     do not ask before rebooting (the launcher sets this when the
+                   machine has no dialog tool at all)
   -h, --help       this text
 
 Test seams (do not set these by hand):
@@ -298,6 +384,7 @@ main() {
   local cmd=""
   GUI=0
   CONFIRMED=0
+  NO_CONFIRM=0
   DRY_RUN=0
   [[ ${OSSWITCH_DRY_RUN:-0} == 1 ]] && DRY_RUN=1
 
@@ -305,6 +392,7 @@ main() {
     case "$1" in
       --dry-run)   DRY_RUN=1 ;;
       --gui)       GUI=1 ;;
+      --no-confirm) NO_CONFIRM=1 ;;
       --confirmed) CONFIRMED=1 ;;   # set internally when re-escalating after asking
       --efibootmgr) [[ $# -ge 2 ]] || die "--efibootmgr needs a path"; EFIBOOTMGR="$2"; shift ;;
       --systemctl)  [[ $# -ge 2 ]] || die "--systemctl needs a path"; SYSTEMCTL="$2"; shift ;;

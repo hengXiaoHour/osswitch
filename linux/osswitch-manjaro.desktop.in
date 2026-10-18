@@ -8,7 +8,7 @@ Comment=Reboot straight into Manjaro, skipping the GRUB menu
 # Windows override rather than fighting it. A plain reboot with a Windows
 # override still queued would go to Windows - the opposite of what this button
 # promises - so this deliberately never takes the "just reboot" shortcut.
-Exec=@HOME@/.local/bin/osswitch --gui manjaro
+Exec=@HOME@/.local/bin/osswitch @CONFIRM@ manjaro
 Icon=osswitch-manjaro
 Terminal=false
 Categories=System;

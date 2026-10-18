@@ -67,14 +67,34 @@ do_it mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR/48x48/apps" "$ICON_DIR/256x256/a
 # The launcher needs an absolute path, and the spec's own placeholder for the
 # home directory (%h) is deprecated - desktop-file-validate rejects it outright.
 # So the .desktop.in templates are rendered here instead.
+#
+# Whether the launcher can ask before rebooting is decided HERE, from what this
+# machine actually has: zenity or yad. Both are well-trodden front-ends for the
+# same GTK dialog.
+#
+# With neither, the launcher gets --no-confirm and reboots on click, which is
+# exactly how this button behaved before it ever asked. That is deliberate: the
+# point of the launcher is to switch OS in one click, and a launcher that can
+# only fail at you is worse than one that does not ask. A launcher must never be
+# the reason the machine will not switch.
+DIALOG_WHAT="none"
+CONFIRM_FLAG="--gui --no-confirm"
+if command -v zenity >/dev/null 2>&1; then
+  DIALOG_WHAT="zenity"; CONFIRM_FLAG="--gui"
+elif command -v yad >/dev/null 2>&1; then
+  DIALOG_WHAT="yad"; CONFIRM_FLAG="--gui"
+fi
+
 do_it install -m 0755 "$HERE/osswitch" "$BIN_DIR/osswitch"
 for which in windows manjaro; do
   do_it install -m 0644 "$HERE/osswitch-$which.desktop.in" \
                 "$APP_DIR/osswitch-$which.desktop"
   if (( DRY )); then
     printf 'would: render @HOME@ -> %s in %s\n' "$HOME" "$APP_DIR/osswitch-$which.desktop"
+    printf 'would: set Exec flags to "%s" (dialog: %s)\n' "$CONFIRM_FLAG" "$DIALOG_WHAT"
   else
-    sed -i "s|@HOME@|$HOME|g" "$APP_DIR/osswitch-$which.desktop"
+    sed -i -e "s|@HOME@|$HOME|g" -e "s|@CONFIRM@|$CONFIRM_FLAG|g" \
+           "$APP_DIR/osswitch-$which.desktop"
   fi
 done
 
@@ -109,16 +129,13 @@ say "Installed:"
 say "  $BIN_DIR/osswitch"
 say "  two launchers: 'Switch to Windows 11' and 'Switch to Manjaro'"
 say ""
-if command -v zenity >/dev/null 2>&1; then
-  say "Dialog tool: zenity"
-elif command -v yad >/dev/null 2>&1; then
-  say "Dialog tool: yad"
+if [[ $DIALOG_WHAT == none ]]; then
+  say "No zenity or yad here, so the launchers reboot when clicked, no question."
+  say "That is how this button worked before it ever asked, and it is what"
+  say "keeps a one-click launcher a one-click launcher. To get the question"
+  say "back:  sudo pacman -S zenity, then re-run ./install.sh"
 else
-  say "WARNING: neither zenity nor yad is installed."
-  say "         The launchers need one of them - to ask before rebooting, and to"
-  say "         show a failure. With neither, they refuse to switch rather than"
-  say "         restart the machine without asking."
-  say "         Install one with:  sudo pacman -S zenity"
+  say "Dialog tool: $DIALOG_WHAT  (the launchers ask before rebooting)"
 fi
 say ""
 say "Try it before you trust it:"
