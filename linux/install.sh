@@ -40,13 +40,45 @@ need() {
 need install
 need mkdir
 
-FILES=("$BIN_DIR/osswitch"
-       "$APP_DIR/osswitch-windows.desktop"
-       "$APP_DIR/osswitch-linux.desktop"
+# Is the machine we are installing on already running Linux? If so, a
+# "Switch to Linux" button would reboot into... Linux. That is not a switch,
+# it is a restart button with a confusing name, so it is not installed: the
+# only thing worth doing from Linux is going to Windows.
+#
+# Read BootCurrent and ask what that entry is. Nothing here touches the
+# firmware, and efibootmgr needs no privilege to be read.
+INSTALL_LINUX=1
+if command -v efibootmgr >/dev/null 2>&1; then
+  boot_current=$(efibootmgr 2>/dev/null | sed -n 's/^BootCurrent: //p' | tr -d '[:space:]')
+  if [[ -n $boot_current ]]; then
+    current_desc=$(efibootmgr -v 2>/dev/null | awk -v want="$boot_current" '
+      match($0, /^Boot[0-9A-F][0-9A-F][0-9A-F][0-9A-F]\*?/) {
+        id  = substr($0, RSTART + 4, 4)
+        rest = substr($0, RSTART + RLENGTH)
+        sub(/^[[:space:]]+/, "", rest)
+        desc = rest
+        if (index(desc, "\t") > 0) desc = substr(desc, 1, index(desc, "\t") - 1)
+        if (id == want) { print desc; exit }
+      }')
+    case "${current_desc,,}" in
+      *manjaro*|*linux*|*ubuntu*|*debian*|*fedora*|*centos*|*rhel*|*arch*|*nixos*|*gentoo*|*alpine*|*kali*|*mint*|*elementary*|*zorin*|*pop*|*deepin*|*uos*|*kylin*|*orphan*|*tails*|*qubes*) INSTALL_LINUX=0 ;;
+    esac
+    if (( INSTALL_LINUX == 0 )); then
+      say "This machine already boots Linux ($current_desc) -"
+      say "installing only the 'Switch to Windows 11' launcher."
+    fi
+  fi
+fi
+
+FILES=("$BIN_DIR/osswitch" "$APP_DIR/osswitch-windows.desktop"
        "$ICON_DIR/48x48/apps/osswitch-windows.png"
        "$ICON_DIR/256x256/apps/osswitch-windows.png"
+       "$APP_DIR/osswitch-linux.desktop"
        "$ICON_DIR/48x48/apps/osswitch-linux.png"
        "$ICON_DIR/256x256/apps/osswitch-linux.png")
+(( INSTALL_LINUX )) && INSTALL_FILES=("$APP_DIR/osswitch-linux.desktop"
+       "$ICON_DIR/48x48/apps/osswitch-linux.png"
+       "$ICON_DIR/256x256/apps/osswitch-linux.png") || INSTALL_FILES=()
 
 if (( REMOVE )); then
   say "Removing osswitch:"
@@ -86,7 +118,7 @@ elif command -v yad >/dev/null 2>&1; then
 fi
 
 do_it install -m 0755 "$HERE/osswitch" "$BIN_DIR/osswitch"
-for which in windows linux; do
+for which in windows; do
   do_it install -m 0644 "$HERE/osswitch-$which.desktop.in" \
                 "$APP_DIR/osswitch-$which.desktop"
   if (( DRY )); then
@@ -97,11 +129,22 @@ for which in windows linux; do
            "$APP_DIR/osswitch-$which.desktop"
   fi
 done
+if (( INSTALL_LINUX )); then
+  do_it install -m 0644 "$HERE/osswitch-linux.desktop.in" \
+                "$APP_DIR/osswitch-linux.desktop"
+  if (( DRY )); then
+    printf 'would: render @HOME@ -> %s in %s\n' "$HOME" "$APP_DIR/osswitch-linux.desktop"
+    printf 'would: set Exec flags to "%s" (dialog: %s)\n' "$CONFIRM_FLAG" "$DIALOG_WHAT"
+  else
+    sed -i -e "s|@HOME@|$HOME|g" -e "s|@CONFIRM@|$CONFIRM_FLAG|g" \
+           "$APP_DIR/osswitch-linux.desktop"
+  fi
+fi
 
 # Icons come from the artwork the Windows half already uses, so both launchers
 # look the same on both systems. ImageMagick is optional: without it the 512px
 # originals are installed at both sizes and GNOME scales them.
-for which in windows linux; do
+for which in windows; do
   src="$REPO/assets/$which-512.png"
   [[ -f $src ]] || { printf 'install.sh: missing artwork %s\n' "$src" >&2; exit 1; }
   for size in 48 256; do
@@ -115,6 +158,18 @@ for which in windows linux; do
     fi
   done
 done
+if (( INSTALL_LINUX )); then
+  for size in 48 256; do
+    dest="$ICON_DIR/${size}x${size}/apps/osswitch-linux.png"
+    if command -v magick >/dev/null 2>&1; then
+      do_it magick "$REPO/assets/linux-512.png" -resize "${size}x${size}" "$dest"
+    elif command -v convert >/dev/null 2>&1; then
+      do_it convert "$REPO/assets/linux-512.png" -resize "${size}x${size}" "$dest"
+    else
+      do_it cp "$REPO/assets/linux-512.png" "$dest"
+    fi
+  done
+fi
 
 if (( DRY )); then
   say "(dry run - nothing was written)"
@@ -127,7 +182,11 @@ command -v gtk-update-icon-cache   >/dev/null 2>&1 && gtk-update-icon-cache -f -
 say ""
 say "Installed:"
 say "  $BIN_DIR/osswitch"
-say "  two launchers: 'Switch to Windows 11' and 'Switch to Linux'"
+if (( INSTALL_LINUX )); then
+  say "  two launchers: 'Switch to Windows 11' and 'Switch to Linux'"
+else
+  say "  one launcher: 'Switch to Windows 11' (this machine already boots Linux)"
+fi
 say ""
 if [[ $DIALOG_WHAT == none ]]; then
   say "No zenity or yad here, so the launchers reboot when clicked, no question."
