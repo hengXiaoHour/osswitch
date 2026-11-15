@@ -28,6 +28,33 @@ needs undoing after a successful one.
 
 ---
 
+## What's new
+
+**The Linux command is `osswitch linux`** (not `osswitch manjaro`).
+`manjaro` still works as an alias, so old habits keep working — but the word
+you type, the launcher names and the icon are all "Linux". The firmware entry
+is still *called* `Manjaro` on most machines, and that is left alone: osswitch
+resolves it by description, so the rename is purely on our side.
+
+**The Linux icon is Tux**, not the Manjaro mark. `assets/linux-512.png` is the
+penguin, letterboxed on a transparent canvas; `assets/linux.ico` carries the
+full 16→256px set. The Windows icon is unchanged.
+
+**On a box that already boots Linux, there is no "Switch to Linux" button.**
+`install.sh` reads `BootCurrent`, looks up that entry's description, and if it
+matches any Linux distro (Ubuntu, Manjaro, Debian, Fedora, Arch, Mint, …) it
+installs only **Switch to Windows 11**. A button that reboots Linux into Linux
+is a restart, not a switch. On a Windows box both launchers are installed.
+`-Remove` cleans up both either way, so leftovers from an earlier install
+cannot survive an uninstall.
+
+**GRUB rescue is not an osswitch bug.** osswitch only points the firmware at
+the right entry; if that entry's GRUB then fails to find its filesystem, the
+bootloader on the target OS is broken and osswitch cannot fix it. Verify with
+`osswitch status` — the one-time target is named, not just numbered.
+
+---
+
 ## Linux half (efibootmgr)
 
 `linux/osswitch` — one bash script, `efibootmgr`, and two GNOME launchers. This
