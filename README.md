@@ -1,6 +1,6 @@
 # osswitch
 
-One command to pick which OS this laptop boots next: **Windows 11** or **Manjaro**.
+One command to pick which OS this laptop boots next: **Windows 11** or **Linux**.
 It removes the "reboot, then mash F12 and hope" step from switching between the
 two systems.
 
@@ -11,7 +11,7 @@ There are two halves, and they take the same commands:
 | `osswitch status` | what boots by default, what is pending | same |
 | `osswitch list` | the boot entries this machine has | same |
 | `osswitch windows` | queue Windows, reboot | same |
-| `osswitch manjaro` | queue Manjaro, reboot | same |
+| `osswitch linux` | queue Linux, reboot | same |
 | `osswitch restore` | drop a pending switch | same |
 
 The same names, deliberately: one habit has to work from either side of the
@@ -49,8 +49,8 @@ system-wide:
 ```
 ~/.local/bin/osswitch
 ~/.local/share/applications/osswitch-windows.desktop
-~/.local/share/applications/osswitch-manjaro.desktop
-~/.local/share/icons/hicolor/{48x48,256x256}/apps/osswitch-{windows,manjaro}.png
+~/.local/share/applications/osswitch-linux.desktop
+~/.local/share/icons/hicolor/{48x48,256x256}/apps/osswitch-{windows,linux}.png
 ```
 
 `./install.sh -Remove` takes all of it back out. The icons are rendered from the
@@ -58,7 +58,7 @@ same artwork the Windows half ships, so the two launchers look alike.
 
 **One dependency worth having: `zenity` (or `yad`).** The launchers ask before
 rebooting and show a dialog if anything fails; neither tool is present on a
-stock Manjaro install. `sudo pacman -S zenity`. The script also works fine from
+stock install. Install zenity (or yad) from your distro. The script also works fine from
 a terminal without them — it just does not ask, because you typed the command.
 
 ### The two launchers
@@ -66,15 +66,15 @@ a terminal without them — it just does not ask, because you typed the command.
 | Launcher | Does |
 | --- | --- |
 | **Switch to Windows 11** | `osswitch windows` — queue a one-shot override for Windows, then reboot |
-| **Switch to Manjaro** | `osswitch manjaro` — queue Manjaro (which *replaces* a pending Windows override), then reboot |
+| **Switch to Linux** | `osswitch linux` — queue Linux (which *replaces* a pending Windows override), then reboot |
 
 Both ask "Reboot into … now?" first, and if anything fails they put the reason in
 a dialog rather than dying silently where nobody will see it.
 
-The Manjaro launcher deliberately does not take the "it is already the default,
+The Linux launcher deliberately does not take the "it is already the default,
 just reboot" shortcut. If a Windows override is still queued and unused, a plain
 reboot follows it into Windows — the exact opposite of what the button promises.
-Writing `BootNext=Manjaro` settles the question instead of assuming it.
+Writing `BootNext=Linux` settles the question instead of assuming it.
 
 ### Before you trust it with a real reboot
 
@@ -214,13 +214,13 @@ Then from an **elevated** PowerShell ("Run as administrator"):
 
 ```powershell
 & $env:LOCALAPPDATA\osswitch\osswitch.ps1 status
-& $env:LOCALAPPDATA\osswitch\osswitch.ps1 manjaro -DryRun    # applies, verifies, stops
-& $env:LOCALAPPDATA\osswitch\osswitch.ps1 manjaro             # applies, verifies, reboots
+& $env:LOCALAPPDATA\osswitch\osswitch.ps1 linux -DryRun    # applies, verifies, stops
+& $env:LOCALAPPDATA\osswitch\osswitch.ps1 linux             # applies, verifies, reboots
 ```
 
 The script calls `exit`, so run it from a script rather than dot-sourcing it.
 
-### Before letting Manjaro write to the Windows partition
+### Before letting Linux write to the Windows partition
 
 Hibernation is currently **on**. That leaves the volume in a hibernated state,
 which Linux sees as unclean. `osswitch status` prints the current state; turn it
@@ -291,21 +291,21 @@ OneDrive-redirected profile is `C:\Users\<you>\OneDrive\Desktop`):
 
 | Shortcut | Does |
 | --- | --- |
-| **Switch to Manjaro** | clears any pending override, then restarts into Manjaro |
+| **Switch to Linux** | clears any pending override, then restarts into Linux |
 | **Restart to Windows 11** | sets the one-shot override to Windows and restarts into it |
 
 The Windows icon is called **Restart to** because that is exactly what it does,
 and it is worth being precise: it does not make Windows permanent. The override
 is one-shot, so that single boot goes to Windows and the machine returns to
-Manjaro by itself on the next restart. Nothing has to be clicked to come back.
+Linux by itself on the next restart. Nothing has to be clicked to come back.
 
 **The two icons are deliberately different, because the two jobs are different.**
-Manjaro is already the first boot choice on this machine, so there is no boot
-order to rearrange — that icon is `tools\boot-manjaro.ps1`, a small script that
+Linux is already the first boot choice on this machine, so there is no boot
+order to rearrange — that icon is `tools\boot-linux.ps1`, a small script that
 runs none of the switching machinery. The Windows icon genuinely has to change
 something, so it keeps the full launcher.
 
-The one thing the Manjaro icon still does is delete `{fwbootmgr} bootsequence`.
+The one thing the Linux icon still does is delete `{fwbootmgr} bootsequence`.
 That is not tidiness: if the Windows icon was used and the machine has not
 restarted since, that override is still queued, and a plain restart would follow
 it into **Windows** — the exact opposite of what the button promises. Hence the
@@ -346,22 +346,16 @@ icons stop working; re-run the installer after moving.
 
 ### Icons
 
-`assets\manjaro.ico` is built from **your own** logo file, letterboxed and centred,
+`assets\linux.ico` is built from **your own** logo file, letterboxed and centred,
 at 16/24/32/48/64/128/256 px. `assets\windows.ico` is the four-pane Windows mark,
 drawn from geometry. Regenerate with:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\make_icon.ps1 `
-    -LogoPng "$env:USERPROFILE\Downloads\manjaro-os-logo.png"
+    -LogoPng "$env:USERPROFILE\Downloads\linux-os-logo.png"
 ```
 
-Omit `-LogoPng` and it falls back to drawing the three-block mark from geometry and
-sampling the green off the installation ISO.
-
-The supplied logo's green is `#35BF5C` — the classic Manjaro green, and the
-script prints what it actually sampled rather than trusting a hardcoded value.
-(Omitting `-LogoPng` and using the 26.1 ISO instead picks up `#35BFA4`, the newer
-teal branding; pass `-GreenHex '#35BFA4'` for that.)
+Omit `-LogoPng` and it falls back to drawing the mark from geometry.
 
 Small frames are written as true 32bpp DIBs, not PNG-compressed ones: a
 PNG-compressed 32px frame parses as coloured noise on Windows, so the icons are
@@ -371,7 +365,7 @@ verified by extracting frames back out and looking at them.
 
 ```
 osswitch.ps1                          the Windows half: the switcher itself
-tools/boot-manjaro.ps1                the Manjaro icon: clear override, restart
+tools/boot-linux.ps1                the Linux icon: clear override, restart
 tools/osswitch-launch.ps1             the Windows icon: full switcher, elevated
 tools/osswitch-shortcut.cmd           entry point; dispatches on the target
 tools/install_shortcuts.ps1           creates / removes the desktop icons
@@ -393,7 +387,7 @@ assets/                               the icons, shared with the Linux half
 linux/osswitch                        the Linux half: the switcher itself
 linux/install.sh                      installs/removes the command and launchers
 linux/osswitch-windows.desktop.in     launcher template, @HOME@ rendered on install
-linux/osswitch-manjaro.desktop.in     launcher template, @HOME@ rendered on install
+linux/osswitch-linux.desktop.in     launcher template, @HOME@ rendered on install
 linux/tests/test_osswitch.sh          95 checks + 11 mutation checks
 linux/tests/mutate.py                 the eleven breakages, by name
 linux/tests/mutants.tsv               which scenario must catch which breakage

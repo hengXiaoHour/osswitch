@@ -4,7 +4,7 @@
 #   osswitch status      # what boots by default, and is anything pending
 #   osswitch list        # the UEFI boot entries, nothing else
 #   osswitch windows     # boot Windows 11 next time
-#   osswitch manjaro     # boot Manjaro next time
+#   osswitch linux         # boot Linux next time
 #   osswitch restore      # drop a pending one-time boot (alias: cancel)
 #
 # Uses UEFI BootNext (efibootmgr -n), which the firmware consumes on the next
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-MANJARO_DESC="Manjaro"
+LINUX_DESC="Manjaro"
 WINDOWS_DESC="Windows Boot Manager"
 
 # Test seams. The suite points these at stubs; production never sets them.
@@ -314,8 +314,8 @@ set_bootnext() {
   local id desc
   case "$target" in
     windows) id=$(resolve_entry "$WINDOWS_DESC");;
-    manjaro) id=$(resolve_entry "$MANJARO_DESC");;
-    *) die "unknown target '$target' (use: windows | manjaro)";;
+    linux|manjaro) id=$(resolve_entry "$LINUX_DESC");;
+    *) die "unknown target '$target' (use: windows | linux | manjaro)";;
   esac
   desc=$(describe_entry "$id")
 
@@ -416,11 +416,11 @@ main() {
   fi
 
   case "$cmd" in
-    windows|manjaro) set_bootnext "$cmd";;
+    windows|linux|manjaro) set_bootnext "$cmd";;
     list)            show_list;;
     status)          show_status;;
     restore|cancel)  clear_bootnext;;
-    *) die "unknown command '$cmd' (use: status | list | windows | manjaro | restore)";;
+    *) die "unknown command '$cmd' (use: status | list | windows | linux | restore)";;
   esac
 }
 

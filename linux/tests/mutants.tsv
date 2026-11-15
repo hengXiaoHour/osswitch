@@ -3,8 +3,8 @@
 # the named scenario to fail - a mutant that survives means the check it targets
 # is not really testing anything.
 no-verify            | reboots without checking the firmware accepted the write | sc_write_refused
-verify-stale         | verifies the pre-write state instead of the stored one     | sc_dry_run_windows
-dry-run-ignored      | --dry-run writes and reboots anyway                          | sc_dry_run_windows
+verify-stale            | verifies the pre-write state instead of the stored one     | sc_dry_run_linux
+dry-run-ignored      | --dry-run writes and reboots anyway                          | sc_dry_run_linux
 restore-wrong-flag   | restore uses -b (--bootnum), the original bug                | sc_restore
 restore-no-verify    | restore claims success even when the delete did nothing     | sc_restore_refused
 resolve-fallback     | an absent target silently falls back to another entry       | sc_missing_entry

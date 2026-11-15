@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Switch to Linux
+GenericName=Reboot into Linux
+Comment=Reboot straight into Linux, skipping the GRUB menu
+# One Exec line only: it writes BootNext=Linux, which REPLACES any pending
+# Windows override rather than fighting it. A plain reboot with a Windows
+# override still queued would go to Windows - the opposite of what this button
+# promises - so this deliberately never takes the "just reboot" shortcut.
+Exec=@HOME@/.local/bin/osswitch @CONFIRM@ linux
+Icon=osswitch-linux
+Terminal=false
+Categories=System;
+Keywords=linux;reboot;boot;dualboot;switch;

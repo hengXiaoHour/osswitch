@@ -51,7 +51,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('status', 'list', 'windows', 'manjaro', 'restore')]
+    [ValidateSet('status', 'list', 'windows', 'manjaro', 'linux', 'restore')]
     [string] $Action = 'status',
 
     [switch] $DryRun,
@@ -73,7 +73,8 @@ $script:VendorGuid = '8be4df61-93ca-11d2-aa0d-00e098032b8c'
 
 $script:Targets = @{
     'windows' = @{ Label = 'Windows 11'; Pattern = 'windows boot manager'; Identifier = '{bootmgr}' }
-    'manjaro' = @{ Label = 'Manjaro';    Pattern = 'manjaro';           Identifier = '' }
+    'linux'   = @{ Label = 'Linux';      Pattern = 'manjaro';             Identifier = '' }
+    'manjaro' = @{ Label = 'Linux';      Pattern = 'manjaro';             Identifier = '' }
 }
 
 function Write-Line {
@@ -382,7 +383,7 @@ function Show-Status {
     }
     Write-Line (Get-HibernateNote)
     Write-Line ''
-    Write-Line 'To switch:  osswitch windows    osswitch manjaro    (add -DryRun first)'
+    Write-Line 'To switch:  osswitch windows    osswitch linux    (add -DryRun first)'
 }
 
 function Invoke-Switch {

@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Restarts into Manjaro.
+    Restarts into Linux.
 
 .DESCRIPTION
-    Manjaro is already the first boot choice on this machine, so there is no boot
-    order to rearrange - the machine restarts and lands in Manjaro anyway.
+    Linux is already the first boot choice on this machine, so there is no boot
+    order to rearrange - the machine restarts and lands in Linux anyway.
 
     The one thing that IS worth clearing first is a pending one-shot override. If
     the "Switch to Windows 11" icon was used and the machine has not restarted
@@ -16,7 +16,7 @@
     of it runs here.
 
 .EXAMPLE
-    powershell -File .\tools\boot-manjaro.ps1
+    powershell -File .\tools\boot-linux.ps1
 #>
 [CmdletBinding()]
 param(
@@ -55,10 +55,10 @@ if (-not $alreadyElevated -and $env:OSSWITCH_TEST_BYPASS_ELEVATION -ne '1') {
     exit $child.ExitCode
 }
 
-Write-Log 'BOOT-MANJARO START (elevated)'
+Write-Log 'BOOT-LINUX START (elevated)'
 
 # ---- no confirmation ----
-# Single click = immediate restart. The button promises "Switch to Manjaro",
+# Single click = immediate restart. The button promises "Switch to Linux",
 # so it just does it. Any pending Windows override is cleared first.
 $proceed = $true
 
@@ -91,7 +91,7 @@ catch {
 }
 
 Write-Host ''
-Write-Host '  Manjaro is already the first boot choice.'
+Write-Host '  Linux is already the first boot choice.'
 if ($cleared -like 'a pending*') { Write-Host "  Note: $cleared." }
 Write-Host '  Restarting now...'
 
@@ -106,7 +106,7 @@ try {
         throw "cannot find '$ShutdownPath' on PATH"
     }
     # Immediate restart (/t 0), no countdown.
-    $shutArgs = @('/r', '/t', '0', '/c', '"Switch to Manjaro"')
+    $shutArgs = @('/r', '/t', '0', '/c', '"Switch to Linux"')
     $null = Start-Process -FilePath $ShutdownPath -ArgumentList $shutArgs -WindowStyle Hidden
     Write-Log 'restart scheduled'
 }

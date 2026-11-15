@@ -18,7 +18,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('windows', 'manjaro')]
+    [ValidateSet('windows', 'manjaro', 'linux')]
     [string] $Target,
 
     [switch] $DryRun,
@@ -52,7 +52,7 @@ function Write-Log {
 # $label is defined here, at the very top, because the non-elevated branch below
 # prints it and under Set-StrictMode using it before assignment is fatal: the
 # window opened and died instantly, which looked like "nothing happens".
-$label = if ($Target -eq 'manjaro') { 'Manjaro' } else { 'Windows 11' }
+$label = if ($Target -in @('manjaro', 'linux')) { 'Linux' } else { 'Windows 11' }
 
 # Not $args: under Set-StrictMode an unbound-arguments variable that was never
 # populated throws too.
@@ -123,7 +123,7 @@ Write-Host ("  osswitch - switch to {0}" -f $label)
 Write-Host ("  {0}" -f ('-' * 44))
 
 # No confirmation: single click = immediate restart.
-# The button promises "Restart to Windows 11" / "Switch to Manjaro", so it just does it.
+# The button promises "Restart to Windows 11" / "Switch to Linux", so it just does it.
 
 $sshArgs = @{ Action = $Target }
 if ($DryRun) { $sshArgs['DryRun'] = $true }

@@ -42,11 +42,11 @@ need mkdir
 
 FILES=("$BIN_DIR/osswitch"
        "$APP_DIR/osswitch-windows.desktop"
-       "$APP_DIR/osswitch-manjaro.desktop"
+       "$APP_DIR/osswitch-linux.desktop"
        "$ICON_DIR/48x48/apps/osswitch-windows.png"
        "$ICON_DIR/256x256/apps/osswitch-windows.png"
-       "$ICON_DIR/48x48/apps/osswitch-manjaro.png"
-       "$ICON_DIR/256x256/apps/osswitch-manjaro.png")
+       "$ICON_DIR/48x48/apps/osswitch-linux.png"
+       "$ICON_DIR/256x256/apps/osswitch-linux.png")
 
 if (( REMOVE )); then
   say "Removing osswitch:"
@@ -86,7 +86,7 @@ elif command -v yad >/dev/null 2>&1; then
 fi
 
 do_it install -m 0755 "$HERE/osswitch" "$BIN_DIR/osswitch"
-for which in windows manjaro; do
+for which in windows linux; do
   do_it install -m 0644 "$HERE/osswitch-$which.desktop.in" \
                 "$APP_DIR/osswitch-$which.desktop"
   if (( DRY )); then
@@ -101,7 +101,7 @@ done
 # Icons come from the artwork the Windows half already uses, so both launchers
 # look the same on both systems. ImageMagick is optional: without it the 512px
 # originals are installed at both sizes and GNOME scales them.
-for which in windows manjaro; do
+for which in windows linux; do
   src="$REPO/assets/$which-512.png"
   [[ -f $src ]] || { printf 'install.sh: missing artwork %s\n' "$src" >&2; exit 1; }
   for size in 48 256; do
@@ -127,7 +127,7 @@ command -v gtk-update-icon-cache   >/dev/null 2>&1 && gtk-update-icon-cache -f -
 say ""
 say "Installed:"
 say "  $BIN_DIR/osswitch"
-say "  two launchers: 'Switch to Windows 11' and 'Switch to Manjaro'"
+say "  two launchers: 'Switch to Windows 11' and 'Switch to Linux'"
 say ""
 if [[ $DIALOG_WHAT == none ]]; then
   say "No zenity or yad here, so the launchers reboot when clicked, no question."

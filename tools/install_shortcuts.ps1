@@ -3,7 +3,7 @@
     Creates the two osswitch desktop shortcuts.
 
 .DESCRIPTION
-    Writes "Switch to Manjaro" and "Switch to Windows 11" to the desktop, each
+    Writes "Switch to Linux" and "Switch to Windows 11" to the desktop, each
     pointing at tools\osswitch-launch.ps1 with its own icon from assets\.
 
     The launcher asks for confirmation and re-launches itself elevated, so the
@@ -24,14 +24,14 @@ $ErrorActionPreference = 'Stop'
 $proj = Split-Path -Parent $PSScriptRoot
 $wrapper = Join-Path $proj 'tools\osswitch-shortcut.cmd'
 $launcher = Join-Path $proj 'tools\osswitch-launch.ps1'
-$bootManjaro = Join-Path $proj 'tools\boot-manjaro.ps1'
+$bootLinux = Join-Path $proj 'tools\boot-linux.ps1'
 $assets = Join-Path $proj 'assets'
 
 if (-not (Test-Path $wrapper)) { throw "wrapper not found: $wrapper" }
 if (-not (Test-Path $launcher)) { throw "launcher not found: $launcher" }
-# The manjaro shortcut dispatches to this instead: a plain restart, no admin.
-if (-not (Test-Path $bootManjaro)) { throw "boot-manjaro.ps1 not found: $bootManjaro" }
-foreach ($n in @('manjaro.ico', 'windows.ico')) {
+# The linux shortcut dispatches to this instead: a plain restart, no admin.
+if (-not (Test-Path $bootLinux)) { throw "boot-linux.ps1 not found: $bootLinux" }
+foreach ($n in @('linux.ico', 'windows.ico')) {
     if (-not (Test-Path (Join-Path $assets $n))) {
         throw "icon not found: $n - run .\tools\make_icon.ps1 first"
     }
@@ -46,7 +46,7 @@ $psExe = (Get-Process -Id $PID).Path
 if (-not $psExe) { $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe' }
 
 $links = @(
-    @{ Name = 'Switch to Manjaro.lnk'; Target = 'manjaro'; Icon = 'manjaro.ico' }
+    @{ Name = 'Switch to Linux.lnk'; Target = 'linux'; Icon = 'linux.ico' }
     # Named "Restart to" because that is what it honestly does: it points the NEXT
     # boot at Windows and restarts. The override is one-shot, so Windows is used
     # once and the machine returns to Manjaro on its own after that.
@@ -69,8 +69,8 @@ try {
         $sc.Arguments = $l.Target
         $sc.WorkingDirectory = $proj
         $sc.IconLocation = (Join-Path $assets $l.Icon) + ',0'
-        $sc.Description = $(if ($l.Target -eq 'manjaro') {
-            'Restart into Manjaro (asks before restarting)'
+        $sc.Description = $(if ($l.Target -eq 'linux') {
+            'Restart into Linux (asks before restarting)'
         } else {
             'Restart into Windows 11 this once (asks before restarting)'
         })

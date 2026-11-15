@@ -184,10 +184,10 @@ sc_dry_run_windows() {
   a_has "Windows Boot Manager (0004)" "the resolved entry is named with its id"
 }
 
-sc_dry_run_manjaro() {
-  new_case; run manjaro --dry-run
-  a_rc 0 "manjaro --dry-run exits 0"
-  a_bootnext 0003 "BootNext is set to the Manjaro entry"
+sc_dry_run_linux() {
+  new_case; run linux --dry-run
+  a_rc 0 "linux --dry-run exits 0"
+  a_bootnext 0003 "BootNext is set to the Linux entry"
   a_reboots 0 "nothing rebooted"
 }
 
@@ -237,7 +237,7 @@ sc_missing_entry() {
   new_case
   printf 'BootOrder: 0000\nBoot0000* Something Else\tHD(1,GPT,0,0,0)/x.efi\n' >"$CASE_DIR/entries.txt"
   export OSSWITCH_STUB_ENTRIES="$CASE_DIR/entries.txt"
-  run manjaro --dry-run
+  run linux --dry-run
   a_rc_ne "switching to a target that is not in the firmware fails"
   a_has "no UEFI boot entry matching 'Manjaro'" "the error names what it looked for"
   a_has "osswitch list" "the error says how to look"
@@ -251,9 +251,9 @@ sc_real_fixture() {
   a_rc 0 "real captured efibootmgr output parses (windows)"
   a_bootnext 0004 "real output resolves to the Windows entry"
 
-  run manjaro --dry-run
-  a_rc 0 "real captured efibootmgr output parses (manjaro)"
-  a_bootnext 0003 "real output resolves to the Manjaro entry"
+  run linux --dry-run
+  a_rc 0 "real captured efibootmgr output parses (linux)"
+  a_bootnext 0003 "real output resolves to the Linux entry"
 
   run status
   a_has "UEFI PM9A1 NVMe Samsung" "real output: the disk entry parses"
@@ -374,7 +374,7 @@ sc_harness_self_test() {
 
 ALL_SCENARIOS=(
   sc_status_clean sc_status_pending sc_list
-  sc_dry_run_windows sc_dry_run_manjaro sc_dry_run_env_gate
+  sc_dry_run_windows sc_dry_run_linux sc_dry_run_env_gate
   sc_write_refused
   sc_restore sc_restore_alias sc_restore_nothing_pending sc_restore_refused
   sc_missing_entry sc_real_fixture sc_already_pending
